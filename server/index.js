@@ -1,40 +1,25 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
-const express = require('express');
-const cors = require('cors');
+if (!process.env.JWT_SECRET) {
+  console.warn('JWT_SECRET is not set — using an insecure development secret');
+  process.env.JWT_SECRET = 'dev-only-secret-change-me';
+}
+
+const app = require('./app');
 const connectDB = require('./config/db');
-
-const app = express();
-
-connectDB();
-
-app.use(cors({
-  origin: '*',
-  credentials: false,
-}));
-
-app.use(express.json());
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Military Asset Management API is running!' });
-});
-
-app.use('/api/auth',       require('./routes/auth'));
-app.use('/api/assets',     require('./routes/assets'));
-app.use('/api/transfers',  require('./routes/transfers'));
-app.use('/api/assignment', require('./routes/assignment'));
-
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    message: 'Something went wrong on the server',
-  });
-});
+const { seedDemoData } = require('./seed');
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+(async () => {
+  const { inMemory } = await connectDB();
+
+  // An in-memory database starts empty, so always seed it. For a real database
+  // seeding is opt-in (SEED_DEMO=true) and only runs while the ledger is empty.
+  if (inMemory || process.env.SEED_DEMO === 'true') {
+    await seedDemoData();
+  }
+
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+})();

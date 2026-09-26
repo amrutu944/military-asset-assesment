@@ -1,0 +1,25 @@
+# One-click deploy: Render → New → Blueprint → select this repo.
+# A single web service builds the React client and serves it from Express,
+# so the UI and the API share one URL (no CORS configuration needed).
+services:
+  - type: web
+    name: milasset
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRE
+        value: 1d
+      # MongoDB Atlas connection string. Leave empty to run on an embedded
+      # in-memory MongoDB that is re-seeded with demo data on every start.
+      - key: MONGO_URI
+        sync: false
+      # Seed demo users + 120 days of history when the ledger is empty
+      - key: SEED_DEMO
+        value: "true"

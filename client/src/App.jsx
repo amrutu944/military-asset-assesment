@@ -1,63 +1,68 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import { IS_DEMO } from './api/axios';
+import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import Inventory from './pages/Inventory.jsx';
 import Purchases from './pages/Purchases.jsx';
 import Transfers from './pages/Transfers.jsx';
 import Assignments from './pages/Assignments.jsx';
-import Layout from './components/Layout.jsx';
+import AuditLog from './pages/AuditLog.jsx';
+import Users from './pages/Users.jsx';
 
-const ProtectedRoute = ({ children, roles }) => {
-  const { isLoggedIn, user } = useAuth();
+// The demo build is served from a single static page, so it uses hash routing
+const Router = IS_DEMO ? HashRouter : BrowserRouter;
+
+function Guard({ section, children }) {
+  const { isLoggedIn, can } = useAuth();
   if (!isLoggedIn) return <Navigate to="/login" replace />;
-  if (roles && !roles.includes(user?.role)) return <Navigate to="/dashboard" replace />;
+  if (section && !can(section)) return <Navigate to="/dashboard" replace />;
   return children;
-};
-
-const PublicRoute = ({ children }) => {
-  const { isLoggedIn } = useAuth();
-  return isLoggedIn ? <Navigate to="/dashboard" replace /> : children;
-};
-
-function AppRoutes() {
-  return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route path="dashboard"   element={<Dashboard />} />
-        <Route path="purchases"   element={<Purchases />} />
-        <Route path="transfers"   element={<Transfers />} />
-        <Route path="assignments" element={<Assignments />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
-  );
 }
 
-function App() {
+function PublicOnly({ children }) {
+  const { isLoggedIn } = useAuth();
+  return isLoggedIn ? <Navigate to="/dashboard" replace /> : children;
+}
+
+const PAGES = [
+  ['dashboard', Dashboard],
+  ['inventory', Inventory],
+  ['purchases', Purchases],
+  ['transfers', Transfers],
+  ['assignments', Assignments],
+  ['audit', AuditLog],
+  ['users', Users],
+];
+
+export default function App() {
   return (
     <AuthProvider>
       <Router>
         <Toaster
           position="top-right"
           toastOptions={{
-            duration: 4000,
+            duration: 3500,
             style: {
-              background: '#1a3a2a',
-              color: '#e2e8f0',
-              border: '1px solid rgba(74,222,128,0.3)',
-              fontFamily: 'Inter, sans-serif',
+              background: '#141a24', color: '#e8edf4', border: '1px solid rgba(255,255,255,.12)',
+              fontSize: '.86rem', borderRadius: 10,
             },
-            success: { iconTheme: { primary: '#4ade80', secondary: '#0a0f0d' } },
-            error:   { iconTheme: { primary: '#ef4444', secondary: '#0a0f0d' } },
+            success: { iconTheme: { primary: '#4ade80', secondary: '#0b0f15' } },
+            error: { iconTheme: { primary: '#f87171', secondary: '#0b0f15' } },
           }}
         />
-        <AppRoutes />
+        <Routes>
+          <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+          <Route element={<Guard><Layout /></Guard>}>
+            {PAGES.map(([section, Page]) => (
+              <Route key={section} path={`/${section}`} element={<Guard section={section}><Page /></Guard>} />
+            ))}
+          </Route>
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </Router>
     </AuthProvider>
   );
 }
-
-export default App;

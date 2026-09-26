@@ -5,21 +5,30 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "dev:memory": "node -e \"process.env.USE_MEMORY_DB='true';require('./index.js')\"",
+    "seed": "node seed.js",
+    "test": "node --test tests/api.test.js"
   },
   "dependencies": {
-  "bcryptjs": "^2.4.3",
-  "cors": "^2.8.5",
-  "dotenv": "^16.3.1",
-  "express": "^4.18.2",
-  "jsonwebtoken": "^9.0.0",
-  "mongoose": "^7.6.3"
-},
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.0",
+    "mongodb-memory-server-core": "^11.3.0",
+    "mongoose": "^7.6.3"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -1,140 +1,56 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
-const { protect, authorize } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
+const { asyncHandler, HttpError } = require('../utils/http');
 
-const generateToken = (user) => {
-  return jwt.sign(
-    {
-      id: user._id,       
-      role: user.role,    
-      base: user.base,   
-    },
-    process.env.JWT_SECRET, 
-    {
-      expiresIn: process.env.JWT_EXPIRE,
-    }
-  );
-};
+const generateToken = (user) =>
+  jwt.sign({ id: user._id, role: user.role, base: user.base }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE || '1d',
+  });
 
-router.post('/register', async (req, res) => {
-  try {
-    const { name, email, password, role, base } = req.body;
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'A user with this email already exists',
-      });
-    }
-
-    const user = await User.create({ name, email, password, role, base });
-
-    res.status(201).json({
-      success: true,
-      message: 'User created successfully',
-      data: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        base: user.base,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
+const publicUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  base: user.base,
 });
 
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide email and password',
-      });
-    }
-
-    const user = await User.findOne({ email }).select('+password');
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password',
-      });
-    }
-
-    if (!user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Your account has been deactivated. Contact admin.',
-      });
-    }
-
-    const isMatch = await user.matchPassword(password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password',
-      });
-    }
-
-    const token = generateToken(user);
-
-    res.status(200).json({
-      success: true,
-      message: `Welcome back, ${user.name}!`,
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        base: user.base,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
+// Brute-force protection on the only unauthenticated write endpoint
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many login attempts, please try again in 15 minutes' },
 });
 
-router.get('/me', protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
+router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) throw new HttpError(400, 'Please provide email and password');
 
-    res.status(200).json({
-      success: true,
-      data: user,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-});
+  const user = await User.findOne({ email: String(email).toLowerCase() }).select('+password');
+  const valid = user && user.isActive && (await user.matchPassword(password));
 
-router.get('/users', protect, authorize('admin'), async (req, res) => {
-  try {
-    const users = await User.find().select('-password');
-    res.status(200).json({
-      success: true,
-      count: users.length,
-      data: users,
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (!valid) {
+    res.locals.audit = { action: 'LOGIN_FAILED', entity: 'User', summary: `Failed login for ${email}` };
+    throw new HttpError(401, 'Invalid email or password');
   }
+
+  res.locals.audit = { action: 'LOGIN', entity: 'User', entityId: user._id, user, summary: `${user.name} signed in` };
+  res.json({
+    success: true,
+    message: `Welcome back, ${user.name}!`,
+    token: generateToken(user),
+    user: publicUser(user),
+  });
+}));
+
+router.get('/me', protect, (req, res) => {
+  res.json({ success: true, data: publicUser(req.user) });
 });
 
 module.exports = router;

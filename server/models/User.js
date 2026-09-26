@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { BASES, ROLES } = require('../config/constants');
 
 const UserSchema = new mongoose.Schema(
   {
@@ -30,14 +31,14 @@ const UserSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ['admin', 'base_commander', 'logistics_officer'],
+      enum: ROLES,
       default: 'logistics_officer',
     },
 
     base: {
       type: String,
       required: [true, 'Please assign a base'],
-      enum: ['Base Alpha', 'Base Bravo', 'Base Charlie', 'Base Delta'],
+      enum: BASES,
     },
 
     isActive: {

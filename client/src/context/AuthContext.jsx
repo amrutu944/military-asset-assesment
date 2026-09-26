@@ -1,83 +1,78 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import API from '../api/axios';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import API from '../api/axios';
+import { ACCESS } from '../lib/constants';
+import { storage } from '../lib/storage';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
+
+const readStoredUser = () => {
+  try {
+    const token = storage.get('token');
+    const user = JSON.parse(storage.get('user') || 'null');
+    return token && user ? user : null;
+  } catch {
+    return null;
+  }
+};
 
 export const AuthProvider = ({ children }) => {
-  const [user,    setUser]    = useState(null);
-  const [token,   setToken]   = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(readStoredUser);
+
+  const clear = useCallback(() => {
+    storage.remove('token');
+    storage.remove('user');
+    setUser(null);
+  }, []);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('token');
-    const savedUser  = localStorage.getItem('user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
-  }, []);
+    const onExpired = () => {
+      clear();
+      toast.error('Session expired — please sign in again');
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, [clear]);
 
   const login = async (email, password) => {
     try {
       const res = await API.post('/auth/login', { email, password });
-      const { token, user } = res.data;
-      setToken(token);
-      setUser(user);
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      toast.success(`Welcome back, ${user.name}! 🪖`);
+      storage.set('token', res.data.token);
+      storage.set('user', JSON.stringify(res.data.user));
+      setUser(res.data.user);
+      toast.success(`Welcome, ${res.data.user.name}`);
       return { success: true };
     } catch (error) {
-      const message = error.response?.data?.message || 'Login failed';
-      toast.error(message);
+      const message = error.response?.data?.message
+        || (error.code === 'ECONNABORTED' ? 'Server is waking up — please try again' : 'Unable to reach the server');
       return { success: false, message };
     }
   };
 
   const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    toast.success('Logged out successfully');
+    clear();
+    toast.success('Signed out');
   };
 
-  const hasRole = (...roles) => user && roles.includes(user.role);
+  const can = (section) => !!user && (ACCESS[section] || []).includes(user.role);
 
   const value = {
-    user, token, loading, login, logout, hasRole,
-    isAdmin:             user?.role === 'admin',
-    isCommander:         user?.role === 'base_commander',
-    isLogisticsOfficer:  user?.role === 'logistics_officer',
-    isLoggedIn:          !!user,
+    user,
+    login,
+    logout,
+    can,
+    isLoggedIn: !!user,
+    isAdmin: user?.role === 'admin',
+    isCommander: user?.role === 'base_commander',
+    isLogistics: user?.role === 'logistics_officer',
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center"
-           style={{ backgroundColor: '#0a0f0d' }}>
-        <div style={{ color: '#4ade80', fontFamily: 'Orbitron, monospace',
-                      fontSize: '1.2rem', letterSpacing: '0.2em' }}
-             className="animate-pulse">
-          ⚡ INITIALIZING SYSTEM...
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) throw new Error('useAuth must be used inside AuthProvider');
   return context;
 };
-
-export default AuthContext;

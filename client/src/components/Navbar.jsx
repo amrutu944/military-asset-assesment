@@ -1,117 +1,97 @@
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { FiMenu, FiMapPin } from 'react-icons/fi';
 import { useAuth } from '../context/AuthContext.jsx';
+import { ROLE_META } from '../lib/constants';
+import { IS_DEMO } from '../api/axios';
 
-const ROLE_CONFIG = {
-  admin:             { label: 'Admin',             color: '#68d391' },
-  base_commander:    { label: 'Commander',         color: '#f6e05e' },
-  logistics_officer: { label: 'Logistics Officer', color: '#76e4f7' },
+const TITLES = {
+  '/dashboard': 'Dashboard', '/inventory': 'Inventory', '/purchases': 'Purchases', '/transfers': 'Transfers',
+  '/assignments': 'Assignments & Expenditures', '/audit': 'Audit Log', '/users': 'User Management',
 };
 
-export default function Navbar({ sidebarCollapsed, onMobileMenuClick }) {
-  const { user } = useAuth();
-  const role = ROLE_CONFIG[user?.role] || ROLE_CONFIG.logistics_officer;
+function Clock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <span className="mono muted navbar-clock" style={{ fontSize: '.74rem' }}>
+      {now.toISOString().slice(0, 16).replace('T', ' ')} UTC
+    </span>
+  );
+}
+
+// Demo data lives in this browser; a second click within 4s confirms the reset
+function DemoReset() {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return undefined;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  const onClick = async () => {
+    if (!armed) { setArmed(true); return; }
+    (await import('../api/mock/server.js')).resetDemo();
+    window.location.reload();
+  };
 
   return (
-    <header style={{
-      position: 'fixed',
-      top: 0,
-      right: 0,
-      left: 0,
-      height: 60,
-      backgroundColor: 'var(--bg-navbar)',
-      borderBottom: '1px solid var(--border)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '0 1.25rem',
-      zIndex: 40,
-    }}>
+    <button
+      className="badge"
+      style={{ '--b-color': 'var(--amber)', '--b-bg': 'var(--amber-bg)', '--b-border': 'var(--amber-border)', cursor: 'pointer' }}
+      title="Demo mode: data is stored in this browser"
+      onClick={onClick}
+    >
+      {armed ? 'Click again to reset data' : 'Demo · reset data'}
+    </button>
+  );
+}
 
-      {/* Left: mobile menu + title */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+export default function Navbar({ collapsed, onMenu }) {
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+  const role = ROLE_META[user?.role] || ROLE_META.logistics_officer;
 
-        {/* Mobile hamburger */}
-        <button
-          onClick={onMobileMenuClick}
-          className="mobile-menu-btn"
-          style={{
-            background: 'none',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 8px',
-            cursor: 'pointer',
-            color: 'var(--text-secondary)',
-            fontSize: '1rem',
-            display: 'none',
-            transition: 'border-color 0.15s, color 0.15s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-        >
-          ☰
-        </button>
-        <style>{`@media(max-width:768px){ .mobile-menu-btn { display: block !important; } }`}</style>
+  return (
+    <header
+      className="navbar"
+      style={{
+        position: 'fixed', top: 0, right: 0, left: collapsed ? 72 : 'var(--sidebar-w)', zIndex: 50,
+        height: 'var(--navbar-h)', display: 'flex', alignItems: 'center', gap: '.8rem', padding: '0 1.5rem',
+        background: 'rgba(11,15,21,.82)', backdropFilter: 'blur(10px)', borderBottom: '1px solid var(--border)',
+        transition: 'left .25s ease',
+      }}
+    >
+      <style>{`
+        @media (max-width: 900px) { .navbar { left: 0 !important; padding: 0 1rem !important; } .menu-btn { display: inline-flex !important; } }
+        @media (max-width: 640px) { .navbar-clock, .navbar-user-text { display: none; } }
+      `}</style>
+      <button className="btn btn-ghost btn-icon menu-btn" style={{ display: 'none' }} onClick={onMenu} aria-label="Open menu"><FiMenu /></button>
 
-        <span style={{
-          fontFamily: 'var(--font-heading)',
-          fontSize: '0.8rem',
-          fontWeight: 600,
-          color: 'var(--text-muted)',
-          letterSpacing: '0.02em',
-        }}>
-          Military Asset Management
-        </span>
+      <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {TITLES[pathname] || 'MilAsset'}
       </div>
+      {IS_DEMO && <DemoReset />}
 
-      {/* Right: user chip */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '5px 12px',
-        borderRadius: 8,
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        border: '1px solid var(--border)',
-      }}>
-        {/* Avatar */}
+      <div className="spacer" />
+      <Clock />
+
+      <div className="row" style={{ gap: 10, padding: '.3rem .7rem .3rem .35rem', borderRadius: 99, border: '1px solid var(--border)', background: 'rgba(255,255,255,.02)' }}>
         <div style={{
-          width: 28,
-          height: 28,
-          borderRadius: '50%',
-          backgroundColor: `${role.color}20`,
-          border: `1px solid ${role.color}50`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: 700,
-          fontSize: '0.75rem',
-          color: role.color,
-          fontFamily: 'var(--font-heading)',
-          flexShrink: 0,
+          width: 30, height: 30, borderRadius: '50%', display: 'grid', placeItems: 'center', flex: 'none',
+          background: `color-mix(in srgb, ${role.color} 18%, transparent)`, color: role.color, fontWeight: 700, fontSize: '.8rem',
         }}>
-          {user?.name?.charAt(0).toUpperCase()}
+          {user?.name?.replace(/^\S+\.\s*/, '').charAt(0)}
         </div>
-
-        {/* Name + role */}
-        <div className="navbar-user-text">
-          <div style={{
-            fontWeight: 600,
-            fontSize: '0.82rem',
-            color: 'var(--text-primary)',
-            lineHeight: 1.2,
-            whiteSpace: 'nowrap',
-          }}>
-            {user?.name}
-          </div>
-          <div style={{
-            fontSize: '0.68rem',
-            color: role.color,
-            fontFamily: 'var(--font-heading)',
-            fontWeight: 500,
-          }}>
-            {role.label}
+        <div className="navbar-user-text" style={{ lineHeight: 1.2 }}>
+          <div style={{ fontWeight: 600, fontSize: '.8rem', whiteSpace: 'nowrap' }}>{user?.name}</div>
+          <div className="row" style={{ gap: 4, fontSize: '.68rem', color: role.color }}>
+            {role.label} <span className="muted">·</span> <FiMapPin size={10} className="muted" /> <span className="muted">{user?.base}</span>
           </div>
         </div>
-        <style>{`@media(max-width:480px){ .navbar-user-text { display: none; } }`}</style>
       </div>
     </header>
   );

@@ -1,51 +1,36 @@
 import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import Sidebar from './Sidebar.jsx';
 import Navbar from './Navbar.jsx';
+import { storage } from '../lib/storage';
 
 export default function Layout() {
-  const [collapsed,   setCollapsed]   = useState(false);
-  const [mobileOpen,  setMobileOpen]  = useState(false);
+  const [collapsed, setCollapsed] = useState(() => storage.get('sidebar') === 'collapsed');
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
 
-  const sidebarWidth = collapsed ? 68 : 240;
+  const toggle = () => {
+    setCollapsed((c) => {
+      storage.set('sidebar', c ? 'open' : 'collapsed');
+      return !c;
+    });
+  };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-base)' }}>
-
-      <Sidebar
-        collapsed={collapsed}
-        setCollapsed={setCollapsed}
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-      />
-
-      {/* Main area */}
-      <div
-        className="main-wrapper"
-        style={{
-          marginLeft: sidebarWidth,
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-          transition: 'margin-left 0.25s ease',
-        }}
-      >
-        <style>{`@media(max-width:768px){ .main-wrapper { margin-left: 0 !important; } }`}</style>
-
-        <Navbar
-          sidebarCollapsed={collapsed}
-          onMobileMenuClick={() => setMobileOpen(true)}
-        />
-
-        <main style={{
-          flex: 1,
-          marginTop: 60,
-          padding: '1.5rem',
-          minHeight: 'calc(100vh - 60px)',
-        }}>
+    <div className="app-shell">
+      <Sidebar collapsed={collapsed} onToggle={toggle} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+      <div className={`app-main ${collapsed ? 'collapsed' : ''}`}>
+        <Navbar collapsed={collapsed} onMenu={() => setMobileOpen(true)} />
+        <motion.main
+          key={location.pathname}
+          className="app-content"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
           <Outlet />
-        </main>
+        </motion.main>
       </div>
     </div>
   );

@@ -1,506 +1,297 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useApi } from '../hooks/useApi';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Legend,
 } from 'recharts';
-import API from '../api/axios';
-import { useAuth } from '../context/AuthContext';
+import {
+  FiArchive, FiTrendingUp, FiFlag, FiUserCheck, FiZap, FiRefreshCw, FiAlertTriangle, FiArrowRight, FiClock,
+  FiShoppingCart, FiLogIn, FiLogOut, FiX,
+} from 'react-icons/fi';
+import { useAuth } from '../context/AuthContext.jsx';
+import {
+  PageHeader, Card, Kpi, Modal, DataTable, TypeBadge, Badge, Empty, Skeleton, Field, DatePresets, BaseSelect, TypeSelect,
+} from '../components/ui.jsx';
+import { MOVE, TYPE_META } from '../lib/constants';
+import { fmtNum, fmtSigned, fmtDate, fmtDateTime, fmtMoney, fmtCompact, fmtRelative, daysAgo, today, cleanParams } from '../lib/format';
 
-const BASES       = ['All Bases', 'Base Alpha', 'Base Bravo', 'Base Charlie', 'Base Delta'];
-const ASSET_TYPES = ['All Types', 'vehicle', 'weapon', 'ammunition', 'equipment'];
-const PIE_COLORS  = ['#63b3ed', '#68d391', '#f6e05e', '#b794f4'];
+const GRID = 'rgba(255,255,255,0.05)';
+const AXIS = { fill: '#6b7788', fontSize: 11 };
 
-const TYPE_EMOJI = { vehicle: '🚗', weapon: '🔫', ammunition: '💊', equipment: '⚙️' };
-
-// ── Stat Card ─────────────────────────────────────────────────────────────────
-function StatCard({ title, value, emoji, color, subtitle }) {
-  return (
-    <div className="stat-card" style={{ borderLeft: `3px solid ${color}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '1.6rem' }}>{emoji}</span>
-        <span style={{
-          fontFamily: 'var(--font-heading)',
-          fontSize: '1.8rem',
-          fontWeight: 700,
-          color,
-        }}>
-          {typeof value === 'number' ? value.toLocaleString() : value}
-        </span>
-      </div>
-      <div style={{
-        fontFamily: 'var(--font-heading)',
-        fontSize: '0.8rem',
-        fontWeight: 600,
-        color: 'var(--text-primary)',
-        marginTop: 6,
-      }}>
-        {title}
-      </div>
-      {subtitle && (
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
-          {subtitle}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Custom Tooltip ────────────────────────────────────────────────────────────
-function CustomTooltip({ active, payload, label }) {
+function ChartTooltip({ active, payload, label, labelFormatter }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{
-      backgroundColor: 'var(--bg-card)',
-      border: '1px solid var(--border)',
-      borderRadius: 8,
-      padding: '10px 14px',
-      fontSize: '0.82rem',
-      boxShadow: 'var(--shadow-md)',
-    }}>
-      <p style={{ color: 'var(--accent)', fontWeight: 600, marginBottom: 4 }}>{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color || 'var(--text-primary)' }}>
-          {p.name}: <strong>{p.value?.toLocaleString()}</strong>
-        </p>
+    <div style={{ background: '#10151d', border: '1px solid rgba(255,255,255,.14)', borderRadius: 10, padding: '.55rem .75rem', fontSize: '.78rem', boxShadow: 'var(--shadow-md)' }}>
+      <div className="secondary" style={{ marginBottom: 4, fontWeight: 600 }}>{labelFormatter ? labelFormatter(label) : label}</div>
+      {payload.map((p) => (
+        <div key={p.dataKey} className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
+          <span className="row" style={{ gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color || p.fill }} />
+            <span className="secondary">{p.name}</span>
+          </span>
+          <span className="mono" style={{ color: 'var(--text-primary)' }}>{fmtNum(Math.abs(p.value))}</span>
+        </div>
       ))}
     </div>
   );
 }
 
-// ── Main Dashboard ────────────────────────────────────────────────────────────
-export default function Dashboard() {
-  const { user, isAdmin } = useAuth();
+const legendText = (v) => <span style={{ color: 'var(--text-secondary)', fontSize: '.76rem' }}>{v}</span>;
 
-  const [assets,       setAssets]       = useState([]);
-  const [summary,      setSummary]      = useState(null);
-  const [transfers,    setTransfers]    = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [selectedBase, setSelectedBase] = useState('All Bases');
-  const [selectedType, setSelectedType] = useState('All Types');
-  const [activeTab,    setActiveTab]    = useState('overview');
-  const [showFilters,  setShowFilters]  = useState(false);
+// ── Net movement drill-down (bonus requirement) ─────────────────────────────
+function NetMovementModal({ open, onClose, summary }) {
+  const [tab, setTab] = useState('purchases');
+  if (!summary) return null;
+  const { metrics, details, range, scope } = summary;
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const params = {};
-      if (selectedBase !== 'All Bases') params.base = selectedBase;
-      if (selectedType !== 'All Types') params.assetType = selectedType;
+  const tabs = [
+    { key: 'purchases', label: 'Purchases', Icon: FiShoppingCart, value: metrics.purchases, sign: '+', rows: details.purchases },
+    { key: 'transferIn', label: 'Transfer In', Icon: FiLogIn, value: metrics.transferIn, sign: '+', rows: details.transferIn },
+    { key: 'transferOut', label: 'Transfer Out', Icon: FiLogOut, value: metrics.transferOut, sign: '−', rows: details.transferOut },
+  ];
+  const current = tabs.find((t) => t.key === tab);
 
-      const [assetsRes, summaryRes, transfersRes] = await Promise.all([
-        API.get('/assets', { params }),
-        API.get('/assets/dashboard/summary', { params }),
-        API.get('/transfers'),
-      ]);
-      setAssets(assetsRes.data.data || []);
-      setSummary(summaryRes.data.data || null);
-      setTransfers(transfersRes.data.data || []);
-    } catch (err) {
-      console.error('Dashboard fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchData(); }, [selectedBase, selectedType]);
-
-  // Derived stats
-  const totalAssets      = assets.reduce((s, a) => s + (a.quantity || 0), 0);
-  const totalTypes       = [...new Set(assets.map(a => a.assetType))].length;
-  const pendingTransfers = transfers.filter(t => t.status === 'pending').length;
-  const criticalAssets   = assets.filter(a => a.quantity <= 10).length;
-
-  // Chart data
-  const pieData = ASSET_TYPES.slice(1).map(type => ({
-    name: type.charAt(0).toUpperCase() + type.slice(1),
-    value: assets.filter(a => a.assetType === type).reduce((s, a) => s + a.quantity, 0),
-  })).filter(d => d.value > 0);
-
-  const barData = BASES.slice(1).map(base => ({
-    name: base.replace('Base ', ''),
-    total: assets.filter(a => a.base === base).reduce((s, a) => s + a.quantity, 0),
-  }));
-
-  const recentTransfers = transfers.slice(0, 5);
-
-  const STATUS_STYLE = {
-    pending:  { color: 'var(--yellow)', bg: 'var(--yellow-bg)' },
-    approved: { color: 'var(--green)',  bg: 'var(--green-bg)'  },
-    rejected: { color: 'var(--red)',    bg: 'var(--red-bg)'    },
-  };
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
-        <span style={{ fontSize: '1.5rem' }}>⏳</span>
-        <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-heading)' }}>Loading dashboard...</span>
-      </div>
-    );
-  }
+  const common = [
+    { key: 'date', header: 'Date', render: (r) => <span className="secondary">{fmtDate(r.date)}</span>, sort: (r) => new Date(r.date).getTime(), csv: (r) => fmtDate(r.date) },
+    { key: 'assetName', header: 'Asset', render: (r) => <div><div className="cell-title">{r.assetName}</div><TypeBadge type={r.assetType} /></div>, sort: (r) => r.assetName, csv: (r) => r.assetName },
+  ];
+  const columns = tab === 'purchases'
+    ? [...common,
+      { key: 'base', header: 'Base', csv: (r) => r.base, sort: (r) => r.base },
+      { key: 'supplier', header: 'Supplier', render: (r) => <span className="secondary">{r.supplier || '—'}</span>, csv: (r) => r.supplier },
+      { key: 'quantity', header: 'Qty', className: 'num', render: (r) => fmtNum(r.quantity), sort: (r) => r.quantity, csv: (r) => r.quantity },
+      { key: 'totalCost', header: 'Value', className: 'num', render: (r) => fmtMoney(r.totalCost), sort: (r) => r.totalCost, csv: (r) => r.totalCost }]
+    : [...common,
+      { key: 'route', header: 'Route', render: (r) => <span className="secondary">{r.fromBase} <FiArrowRight size={11} /> {r.toBase}</span>, csv: (r) => `${r.fromBase} -> ${r.toBase}` },
+      { key: 'by', header: 'Requested by', render: (r) => <span className="secondary">{r.by}</span>, csv: (r) => r.by },
+      { key: 'quantity', header: 'Qty', className: 'num', render: (r) => fmtNum(r.quantity), sort: (r) => r.quantity, csv: (r) => r.quantity }];
 
   return (
-    <div style={{ maxWidth: 1400 }}>
-
-      {/* ── Page Header ── */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 12,
-        marginBottom: '1.5rem',
-      }}>
-        <div>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">
-            Welcome back, <strong style={{ color: 'var(--text-primary)' }}>{user?.name}</strong> · {user?.base}
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            className="btn-outline"
-            onClick={() => setShowFilters(!showFilters)}
-            style={{ color: showFilters ? 'var(--accent)' : undefined, borderColor: showFilters ? 'var(--accent)' : undefined }}
-          >
-            🔽 Filters {showFilters ? '(on)' : ''}
-          </button>
-          <button className="btn-outline" onClick={fetchData}>
-            🔄 Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* ── Filter Panel ── */}
-      {showFilters && (
-        <div className="military-card" style={{ padding: '1.25rem', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
-
-            {/* Base filter */}
-            <div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600, marginBottom: 8, fontFamily: 'var(--font-heading)' }}>
-                BASE
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {BASES.map(base => (
-                  <button
-                    key={base}
-                    onClick={() => setSelectedBase(base)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 6,
-                      fontSize: '0.8rem',
-                      fontFamily: 'var(--font-heading)',
-                      cursor: 'pointer',
-                      border: `1px solid ${selectedBase === base ? 'var(--accent)' : 'var(--border)'}`,
-                      backgroundColor: selectedBase === base ? 'rgba(99,179,237,0.12)' : 'transparent',
-                      color: selectedBase === base ? 'var(--accent)' : 'var(--text-secondary)',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {base === 'All Bases' ? 'All' : base.replace('Base ', '')}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Type filter */}
-            <div>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600, marginBottom: 8, fontFamily: 'var(--font-heading)' }}>
-                ASSET TYPE
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {ASSET_TYPES.map(type => (
-                  <button
-                    key={type}
-                    onClick={() => setSelectedType(type)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 6,
-                      fontSize: '0.8rem',
-                      fontFamily: 'var(--font-heading)',
-                      cursor: 'pointer',
-                      textTransform: 'capitalize',
-                      border: `1px solid ${selectedType === type ? 'var(--accent)' : 'var(--border)'}`,
-                      backgroundColor: selectedType === type ? 'rgba(99,179,237,0.12)' : 'transparent',
-                      color: selectedType === type ? 'var(--accent)' : 'var(--text-secondary)',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {type === 'All Types' ? 'All' : `${TYPE_EMOJI[type]} ${type}`}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Stat Cards ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '1rem',
-        marginBottom: '1.5rem',
-      }}>
-        <StatCard title="Total Assets"      value={totalAssets}      emoji="📦" color="var(--accent)"  subtitle="Across all bases"   />
-        <StatCard title="Asset Types"       value={totalTypes}       emoji="🗂️" color="var(--green)"   subtitle="Categories in use"  />
-        <StatCard title="Pending Transfers" value={pendingTransfers} emoji="🔄" color="var(--yellow)"  subtitle="Awaiting approval"  />
-        <StatCard title="Critical Stock"    value={criticalAssets}   emoji="⚠️" color="var(--red)"     subtitle="Below 10 units"     />
-      </div>
-
-      {/* ── Tabs ── */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: '1.25rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-        {[
-          { id: 'overview',  label: '📈 Overview'  },
-          { id: 'inventory', label: '📦 Inventory' },
-          { id: 'movements', label: '🔄 Movements' },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              borderBottom: `2px solid ${activeTab === tab.id ? 'var(--accent)' : 'transparent'}`,
-              backgroundColor: 'transparent',
-              color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
-              fontFamily: 'var(--font-heading)',
-              fontSize: '0.82rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginBottom: -1,
-              transition: 'color 0.15s',
-            }}
-            onMouseEnter={e => { if (activeTab !== tab.id) e.currentTarget.style.color = 'var(--text-primary)'; }}
-            onMouseLeave={e => { if (activeTab !== tab.id) e.currentTarget.style.color = 'var(--text-secondary)'; }}
-          >
-            {tab.label}
+    <Modal open={open} onClose={onClose} width={900}
+      title="Net Movement breakdown"
+      subtitle={`${scope.base} · ${scope.assetType === 'All Types' ? 'all equipment' : TYPE_META[scope.assetType].plural} · ${fmtDate(range.from)} → ${fmtDate(range.to)}`}>
+      <div className="grid-kpi" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: '1rem' }}>
+        {tabs.map((t) => (
+          <button key={t.key} className={`card kpi clickable`} onClick={() => setTab(t.key)}
+            style={{ '--kpi-color': MOVE[t.key].color, boxShadow: 'none', borderColor: tab === t.key ? 'var(--border-accent)' : undefined, background: tab === t.key ? 'var(--bg-card-hover)' : undefined }}>
+            <span className="kpi-label"><span className="kpi-icon"><t.Icon size={13} /></span>{t.label}</span>
+            <span className="kpi-value" style={{ fontSize: '1.5rem' }}>{t.sign}{fmtNum(t.value)}</span>
+            <span className="kpi-foot">{t.rows.length} record{t.rows.length === 1 ? '' : 's'}</span>
           </button>
         ))}
       </div>
+      <div className="formula" style={{ marginBottom: '1rem' }}>
+        Net Movement = <b>{fmtNum(metrics.purchases)}</b> purchases + <b>{fmtNum(metrics.transferIn)}</b> in − <b>{fmtNum(metrics.transferOut)}</b> out =
+        <b style={{ color: 'var(--accent)' }}>{fmtSigned(metrics.netMovement)}</b>
+      </div>
+      <div className="card" style={{ boxShadow: 'none' }}>
+        <DataTable key={tab} columns={columns} rows={current.rows} pageSize={8} exportName={`net-movement-${tab}`}
+          emptyTitle={`No ${current.label.toLowerCase()} in this period`} initialSort={{ key: 'date', dir: 'desc' }} />
+      </div>
+    </Modal>
+  );
+}
 
-      {/* ── Tab: Overview ── */}
-      {activeTab === 'overview' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
+// ── Page ─────────────────────────────────────────────────────────────────────
+export default function Dashboard() {
+  const { user, isAdmin, can } = useAuth();
+  const navigate = useNavigate();
+  const [filters, setFilters] = useState({ from: daysAgo(29), to: today(), base: 'all', assetType: 'all' });
+  const [showNet, setShowNet] = useState(false);
+  const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
-          {/* Bar Chart */}
-          <div className="military-card" style={{ padding: '1.25rem' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '1rem' }}>
-              Assets by Base
-            </h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={barData} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="name" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="total" fill="var(--accent)" radius={[4,4,0,0]} name="Total" />
-              </BarChart>
-            </ResponsiveContainer>
+  const params = useMemo(() => cleanParams({ ...filters, from: filters.from || '2000-01-01' }), [filters]);
+  const { data, loading, error, reload } = useApi('/dashboard/summary', params);
+
+  const trend = useMemo(() => (data?.trend || []).map((b) => ({
+    ...b,
+    inflowP: b.purchases, inflowT: b.transferIn, outflowT: -b.transferOut, outflowE: -b.expended,
+  })), [data]);
+
+  const m = data?.metrics;
+  const filtersActive = filters.base !== 'all' || filters.assetType !== 'all';
+
+  return (
+    <div className="stack">
+      <PageHeader
+        eyebrow={`${data?.scope.base || user.base} · ${fmtDate(data?.range.from || filters.from)} → ${fmtDate(data?.range.to || filters.to)}`}
+        title="Operational overview"
+        subtitle={`Welcome back, ${user.name}. Balances are computed live from the transaction ledger.`}
+      >
+        {data?.pendingTransfers > 0 && can('transfers') && (
+          <Link to="/transfers" className="btn btn-ghost" style={{ textDecoration: 'none', color: 'var(--amber)', borderColor: 'var(--amber-border)' }}>
+            <FiClock /> {data.pendingTransfers} pending transfer{data.pendingTransfers > 1 ? 's' : ''}
+          </Link>
+        )}
+        <button className="btn btn-ghost" onClick={reload}><FiRefreshCw /> Refresh</button>
+      </PageHeader>
+
+      {/* Filters */}
+      <div className="card filter-bar">
+        <Field label="Period"><DatePresets from={filters.from} to={filters.to} onChange={set} /></Field>
+        <Field label="From"><input type="date" className="input" value={filters.from} max={filters.to || today()} onChange={(e) => set({ from: e.target.value })} /></Field>
+        <Field label="To"><input type="date" className="input" value={filters.to} min={filters.from} max={today()} onChange={(e) => set({ to: e.target.value })} /></Field>
+        <Field label="Base"><BaseSelect value={filters.base} onChange={(base) => set({ base })} isAdmin={isAdmin} userBase={user.base} /></Field>
+        <Field label="Equipment type"><TypeSelect value={filters.assetType} onChange={(assetType) => set({ assetType })} /></Field>
+        {filtersActive && (
+          <button className="btn btn-ghost btn-sm" style={{ marginBottom: 4 }} onClick={() => set({ base: 'all', assetType: 'all' })}><FiX /> Clear</button>
+        )}
+      </div>
+
+      {error && <Card><Empty title="Could not load dashboard">{error}</Empty></Card>}
+
+      {/* KPIs */}
+      {loading && !data ? (
+        <div className="grid-kpi">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} />)}</div>
+      ) : m && (
+        <>
+          <div className="grid-kpi" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .2s' }}>
+            <Kpi label="Opening Balance" value={fmtNum(m.openingBalance)} icon={FiArchive} color="var(--slate)" foot={`Holdings on ${fmtDate(data.range.from)}`} />
+            <Kpi label="Net Movement" value={fmtSigned(m.netMovement)} icon={FiTrendingUp} color="var(--accent)" hint="Details ↗" delay={0.05}
+              foot={`+${fmtCompact(m.purchases)} bought · +${fmtCompact(m.transferIn)} in · −${fmtCompact(m.transferOut)} out`}
+              onClick={() => setShowNet(true)} />
+            <Kpi label="Closing Balance" value={fmtNum(m.closingBalance)} icon={FiFlag} color={MOVE.balance.color} delay={0.1}
+              foot={`${m.closingBalance >= m.openingBalance ? '▲' : '▼'} ${fmtNum(Math.abs(m.closingBalance - m.openingBalance))} vs opening`} />
+            <Kpi label="Assigned" value={fmtNum(m.assigned)} icon={FiUserCheck} color={MOVE.assigned.color} delay={0.15}
+              foot={`${fmtNum(data.activeAssignments)} currently issued to personnel`}
+              onClick={can('assignments') ? () => navigate('/assignments') : undefined} />
+            <Kpi label="Expended" value={fmtNum(m.expended)} icon={FiZap} color={MOVE.expended.color} delay={0.2}
+              foot="Consumed, lost or written off"
+              onClick={can('assignments') ? () => navigate('/assignments?tab=expenditures') : undefined} />
           </div>
 
-          {/* Pie Chart */}
-          <div className="military-card" style={{ padding: '1.25rem' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '1rem' }}>
-              Asset Type Breakdown
-            </h3>
-            {pieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value">
-                    {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />)}
-                  </Pie>
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend formatter={v => <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{v}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 220, color: 'var(--text-muted)' }}>
-                No data available
-              </div>
-            )}
+          <div className="formula">
+            Closing <b>{fmtNum(m.closingBalance)}</b> = Opening <b>{fmtNum(m.openingBalance)}</b> + Net Movement <b>{fmtSigned(m.netMovement)}</b> − Expended <b>{fmtNum(m.expended)}</b>
+            <span className="muted" style={{ fontFamily: 'var(--font-main)' }}>· Assigned items remain base holdings until expended.</span>
           </div>
 
-          {/* Net Movement */}
-          {summary && (
-            <div className="military-card" style={{ padding: '1.25rem', gridColumn: '1 / -1' }}>
-              <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '1rem' }}>
-                Net Movement Summary
-              </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
-                {[
-                  { label: 'Purchased',       value: summary.purchased?.reduce((s,p)=>s+p.total,0)||0,     color: 'var(--green)',  emoji: '⬆️' },
-                  { label: 'Transferred In',  value: summary.transfersIn?.reduce((s,p)=>s+p.total,0)||0,   color: 'var(--accent)', emoji: '➡️' },
-                  { label: 'Transferred Out', value: summary.transfersOut?.reduce((s,p)=>s+p.total,0)||0,  color: 'var(--yellow)', emoji: '⬅️' },
-                  { label: 'Assigned',        value: summary.assignments?.reduce((s,p)=>s+p.total,0)||0,   color: 'var(--purple)', emoji: '✅' },
-                  { label: 'Expended',        value: summary.expenditures?.reduce((s,p)=>s+p.total,0)||0,  color: 'var(--red)',    emoji: '❌' },
-                ].map((item, i) => (
-                  <div key={i} style={{
-                    padding: '1rem',
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(255,255,255,0.03)',
-                    border: '1px solid var(--border)',
-                    textAlign: 'center',
-                  }}>
-                    <div style={{ fontSize: '1.3rem', marginBottom: 4 }}>{item.emoji}</div>
-                    <div style={{ fontFamily: 'var(--font-heading)', color: item.color, fontSize: '1.3rem', fontWeight: 700 }}>
-                      {item.value.toLocaleString()}
-                    </div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: 3 }}>{item.label}</div>
-                  </div>
-                ))}
+          {/* Charts */}
+          <div className="grid-halves">
+            <Card title="Holdings over time" subtitle="Running balance at the end of each period">
+              <div style={{ height: 250 }}>
+                <ResponsiveContainer>
+                  <AreaChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="balFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={MOVE.balance.color} stopOpacity={0.28} />
+                        <stop offset="100%" stopColor={MOVE.balance.color} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={GRID} vertical={false} />
+                    <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={(d) => fmtDate(d).slice(0, 6)} minTickGap={24} />
+                    <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={fmtCompact} width={48} domain={['auto', 'auto']} />
+                    <Tooltip content={<ChartTooltip labelFormatter={fmtDate} />} cursor={{ stroke: 'rgba(255,255,255,.2)' }} />
+                    <Area type="monotone" dataKey="balance" name="Balance" stroke={MOVE.balance.color} strokeWidth={2} fill="url(#balFill)" activeDot={{ r: 4, strokeWidth: 2, stroke: '#141a24' }} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
+            </Card>
 
-              {/* Closing balance */}
-              <div style={{
-                marginTop: '1rem',
-                padding: '0.85rem 1rem',
-                borderRadius: 8,
-                backgroundColor: 'rgba(99,179,237,0.05)',
-                border: '1px solid rgba(99,179,237,0.15)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: 8,
-              }}>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                  Closing Balance = Purchased + In − Out − Assigned − Expended
-                </span>
-                <span style={{ fontFamily: 'var(--font-heading)', color: 'var(--accent)', fontSize: '1.1rem', fontWeight: 700 }}>
-                  {(
-                    (summary.purchased?.reduce((s,p)=>s+p.total,0)||0) +
-                    (summary.transfersIn?.reduce((s,p)=>s+p.total,0)||0) -
-                    (summary.transfersOut?.reduce((s,p)=>s+p.total,0)||0) -
-                    (summary.assignments?.reduce((s,p)=>s+p.total,0)||0) -
-                    (summary.expenditures?.reduce((s,p)=>s+p.total,0)||0)
-                  ).toLocaleString()} units
-                </span>
+            <Card title="Movements" subtitle="Inflows above the line, outflows below">
+              <div style={{ height: 250 }}>
+                <ResponsiveContainer>
+                  <BarChart data={trend} stackOffset="sign" margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="18%">
+                    <CartesianGrid stroke={GRID} vertical={false} />
+                    <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={(d) => fmtDate(d).slice(0, 6)} minTickGap={24} />
+                    <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(Math.abs(v))} width={48} />
+                    <Tooltip content={<ChartTooltip labelFormatter={fmtDate} />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,.25)" />
+                    <Legend iconType="square" iconSize={9} formatter={legendText} wrapperStyle={{ paddingTop: 6 }} />
+                    <Bar dataKey="inflowP" name="Purchases" stackId="m" fill={MOVE.purchases.color} stroke="#141a24" strokeWidth={1} />
+                    <Bar dataKey="inflowT" name="Transfer In" stackId="m" fill={MOVE.transferIn.color} stroke="#141a24" strokeWidth={1} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="outflowT" name="Transfer Out" stackId="m" fill={MOVE.transferOut.color} stroke="#141a24" strokeWidth={1} />
+                    <Bar dataKey="outflowE" name="Expended" stackId="m" fill={MOVE.expended.color} stroke="#141a24" strokeWidth={1} radius={[0, 0, 3, 3]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
+            </Card>
+          </div>
+
+          {/* Ledger by type */}
+          <Card title="Balance ledger by equipment type" subtitle="How each closing balance is derived" bodyClass="">
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Type</th><th className="num">Opening</th><th className="num">+ Purchases</th><th className="num">+ Transfer in</th>
+                    <th className="num">− Transfer out</th><th className="num">Net movement</th><th className="num">− Expended</th>
+                    <th className="num">Closing</th><th className="num">Assigned</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.byType.map((r) => (
+                    <tr key={r.assetType}>
+                      <td><TypeBadge type={r.assetType} /></td>
+                      <td className="num">{fmtNum(r.opening)}</td>
+                      <td className="num">{fmtNum(r.purchases)}</td>
+                      <td className="num">{fmtNum(r.transferIn)}</td>
+                      <td className="num">{fmtNum(r.transferOut)}</td>
+                      <td className={`num ${r.netMovement > 0 ? 'pos' : r.netMovement < 0 ? 'neg' : ''}`}>{fmtSigned(r.netMovement)}</td>
+                      <td className="num">{fmtNum(r.expended)}</td>
+                      <td className="num" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{fmtNum(r.closing)}</td>
+                      <td className="num muted">{fmtNum(r.assigned)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+          </Card>
+
+          <div className="grid-2">
+            <Card title="Holdings by base" subtitle="On hand vs. issued to personnel (current)">
+              {data.byBase.length === 0 ? <Empty title="No holdings" /> : (
+                <div style={{ height: Math.max(160, data.byBase.length * 58 + 40) }}>
+                  <ResponsiveContainer>
+                    <BarChart data={data.byBase} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }} barCategoryGap="28%">
+                      <CartesianGrid stroke={GRID} horizontal={false} />
+                      <XAxis type="number" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={fmtCompact} />
+                      <YAxis type="category" dataKey="base" tick={{ ...AXIS, fill: '#a3afc0' }} tickLine={false} axisLine={false} width={92} />
+                      <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
+                      <Legend iconType="square" iconSize={9} formatter={legendText} />
+                      <Bar dataKey="onHand" name="On hand" stackId="b" fill={MOVE.transferIn.color} stroke="#141a24" strokeWidth={2} />
+                      <Bar dataKey="assigned" name="Assigned" stackId="b" fill={MOVE.assigned.color} stroke="#141a24" strokeWidth={2} radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+
+            <Card title="Low stock alerts" subtitle="Below reorder threshold" bodyClass="card-body" actions={<Badge tone={data.lowStock.length ? 'red' : 'green'} dot>{data.lowStock.length}</Badge>}>
+              {data.lowStock.length === 0 ? <Empty title="All stock levels healthy" /> : (
+                <div className="stack" style={{ gap: 10 }}>
+                  {data.lowStock.map((a) => (
+                    <div key={a._id} className="row" style={{ gap: 10 }}>
+                      <FiAlertTriangle style={{ color: a.quantity === 0 ? 'var(--red)' : 'var(--amber)', flex: 'none' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="cell-title" style={{ fontSize: '.84rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</div>
+                        <div className="cell-sub">{a.base}</div>
+                      </div>
+                      <span className="mono" style={{ fontWeight: 600 }}>{fmtNum(a.quantity)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {data.recentActivity.length > 0 && (
+            <Card title="Recent activity" subtitle="Latest transactions from the audit trail"
+              actions={can('audit') && <Link to="/audit" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>Full audit log <FiArrowRight /></Link>}>
+              {data.recentActivity.map((a) => (
+                <div key={a._id} className="activity-item">
+                  <div className="activity-dot" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><FiClock /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '.86rem' }}>{a.summary}</div>
+                    <div className="cell-sub">{a.userName} · {a.action.replace(/_/g, ' ').toLowerCase()} · <span title={fmtDateTime(a.createdAt)}>{fmtRelative(a.createdAt)}</span></div>
+                  </div>
+                </div>
+              ))}
+            </Card>
           )}
-        </div>
+        </>
       )}
 
-      {/* ── Tab: Inventory ── */}
-      {activeTab === 'inventory' && (
-        <div className="military-card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Current Inventory — {assets.length} assets
-            </h3>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="military-table" style={{ minWidth: 550 }}>
-              <thead>
-                <tr>
-                  <th>Asset</th>
-                  <th>Base</th>
-                  <th>Qty</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assets.length > 0 ? assets.map(asset => {
-                  const statusColor = asset.quantity > 50 ? 'var(--green)' : asset.quantity > 10 ? 'var(--yellow)' : 'var(--red)';
-                  const statusLabel = asset.quantity > 50 ? 'Sufficient' : asset.quantity > 10 ? 'Low' : 'Critical';
-                  return (
-                    <tr key={asset._id}>
-                      <td>
-                        <div style={{ fontWeight: 500 }}>{asset.name}</div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'capitalize' }}>
-                          {TYPE_EMOJI[asset.assetType]} {asset.assetType}
-                        </div>
-                      </td>
-                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{asset.base}</td>
-                      <td style={{ fontFamily: 'var(--font-heading)', color: 'var(--accent)', fontWeight: 700 }}>
-                        {asset.quantity?.toLocaleString()}
-                      </td>
-                      <td>
-                        <span style={{
-                          padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600,
-                          backgroundColor: `${statusColor}18`, color: statusColor,
-                          border: `1px solid ${statusColor}40`,
-                        }}>
-                          {statusLabel}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                }) : (
-                  <tr>
-                    <td colSpan={4} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                      No assets found. Add some via Purchases.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── Tab: Movements ── */}
-      {activeTab === 'movements' && (
-        <div className="military-card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Recent Transfers
-            </h3>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="military-table" style={{ minWidth: 650 }}>
-              <thead>
-                <tr>
-                  <th>Asset</th>
-                  <th>From</th>
-                  <th>To</th>
-                  <th>Qty</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentTransfers.length > 0 ? recentTransfers.map(t => {
-                  const s = STATUS_STYLE[t.status] || STATUS_STYLE.pending;
-                  return (
-                    <tr key={t._id}>
-                      <td>
-                        <div style={{ fontWeight: 500 }}>{t.assetName}</div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'capitalize' }}>
-                          {TYPE_EMOJI[t.assetType]} {t.assetType}
-                        </div>
-                      </td>
-                      <td style={{ color: 'var(--red)', fontSize: '0.85rem' }}>{t.fromBase}</td>
-                      <td style={{ color: 'var(--green)', fontSize: '0.85rem' }}>{t.toBase}</td>
-                      <td style={{ fontFamily: 'var(--font-heading)', color: 'var(--yellow)', fontWeight: 700 }}>{t.quantity}</td>
-                      <td>
-                        <span style={{
-                          padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600,
-                          backgroundColor: s.bg, color: s.color, border: `1px solid ${s.color}40`,
-                          display: 'inline-block',
-                        }}>
-                          {t.status}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                        {new Date(t.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  );
-                }) : (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                      No transfers yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <NetMovementModal open={showNet} onClose={() => setShowNet(false)} summary={data} />
     </div>
   );
 }

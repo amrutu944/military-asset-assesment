@@ -1,0 +1,16 @@
+{
+  "name": "military-asset-management",
+  "private": true,
+  "description": "Military Asset Management System — Express + MongoDB API serving a React (Vite) client",
+  "scripts": {
+    "build": "npm ci --prefix server --omit=dev && npm ci --prefix client --include=dev && npm run build --prefix client",
+    "build:demo": "npm run build:demo --prefix client",
+    "start": "npm start --prefix server",
+    "dev:api": "npm run dev:memory --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "test": "npm test --prefix server"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
