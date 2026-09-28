@@ -2,8 +2,9 @@
 
 A role-based system for commanders and logistics personnel to track the purchase, movement, assignment and expenditure of critical assets (vehicles, weapons, ammunition, equipment) across multiple bases, with full accountability.
 
-**Live demo:** https://claude.ai/artifact/HXmwPoetwfbTAvrHJ38iFv
-One-click sign-in buttons are on the login screen for each role. The hosted demo is the same React app running against an in-browser implementation of the REST API (identical endpoints, RBAC rules and ledger maths, verified against the real server), so reviewers can use it without a backend. Data is stored in your browser; use **Demo · reset data** in the top bar to start over. To run the real Express + MongoDB stack, see [Running locally](#running-locally) or [Deploying](#deploying).
+**Live app:** https://milasset.onrender.com
+
+One-click sign-in buttons for each role are on the login screen. The deployment is the full stack (Express API + MongoDB + React) running as a single Render service, seeded with demo data. It is on Render's free plan, so after a period of inactivity the first request takes about 50 seconds while the server wakes up; the login page shows a notice while it does.
 
 | Role | Email | Password | Scope |
 |---|---|---|---|
@@ -179,7 +180,7 @@ To use your own MongoDB, copy `server/.env.example` to `server/.env` and set `MO
 
 ## Deploying
 
-`render.yaml` is a one-click Render Blueprint: *New → Blueprint → select this repo*. It builds the client, serves it from Express, generates `JWT_SECRET`, and asks for `MONGO_URI` (a free MongoDB Atlas cluster). If `MONGO_URI` is left empty, the service runs on an in-memory database that is re-seeded on every start.
+The live app runs on Render. `render.yaml` is a one-click Render Blueprint: *New → Blueprint → select this repo*. It builds the client, serves it from Express, generates `JWT_SECRET`, and asks for `MONGO_URI` (a free MongoDB Atlas cluster). If `MONGO_URI` is left empty, the service runs on an in-memory database that is re-seeded on every start.
 
 ---
 
