@@ -36,6 +36,14 @@ function ChartTooltip({ active, payload, label, labelFormatter }) {
   );
 }
 
+// Recharts measures its parent after the first render; a real starting size
+// avoids the "width(-1) and height(-1)" warning on that first frame.
+const Chart = ({ height, children }) => (
+  <ResponsiveContainer width="100%" height={height} initialDimension={{ width: 600, height }}>
+    {children}
+  </ResponsiveContainer>
+);
+
 const legendText = (v) => <span style={{ color: 'var(--text-secondary)', fontSize: '.76rem' }}>{v}</span>;
 
 // ── Net movement drill-down (bonus requirement) ─────────────────────────────
@@ -169,7 +177,7 @@ export default function Dashboard() {
           <div className="grid-halves">
             <Card title="Holdings over time" subtitle="Running balance at the end of each period">
               <div style={{ height: 250 }}>
-                <ResponsiveContainer>
+                <Chart height={250}>
                   <AreaChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="balFill" x1="0" y1="0" x2="0" y2="1">
@@ -183,13 +191,13 @@ export default function Dashboard() {
                     <Tooltip content={<ChartTooltip labelFormatter={fmtDate} />} cursor={{ stroke: 'rgba(255,255,255,.2)' }} />
                     <Area type="monotone" dataKey="balance" name="Balance" stroke={MOVE.balance.color} strokeWidth={2} fill="url(#balFill)" activeDot={{ r: 4, strokeWidth: 2, stroke: '#141a24' }} />
                   </AreaChart>
-                </ResponsiveContainer>
+                </Chart>
               </div>
             </Card>
 
             <Card title="Movements" subtitle="Inflows above the line, outflows below">
               <div style={{ height: 250 }}>
-                <ResponsiveContainer>
+                <Chart height={250}>
                   <BarChart data={trend} stackOffset="sign" margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="18%">
                     <CartesianGrid stroke={GRID} vertical={false} />
                     <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={(d) => fmtDate(d).slice(0, 6)} minTickGap={24} />
@@ -202,7 +210,7 @@ export default function Dashboard() {
                     <Bar dataKey="outflowT" name="Transfer Out" stackId="m" fill={MOVE.transferOut.color} stroke="#141a24" strokeWidth={1} />
                     <Bar dataKey="outflowE" name="Expended" stackId="m" fill={MOVE.expended.color} stroke="#141a24" strokeWidth={1} radius={[0, 0, 3, 3]} />
                   </BarChart>
-                </ResponsiveContainer>
+                </Chart>
               </div>
             </Card>
           </div>
@@ -241,7 +249,7 @@ export default function Dashboard() {
             <Card title="Holdings by base" subtitle="On hand vs. issued to personnel (current)">
               {data.byBase.length === 0 ? <Empty title="No holdings" /> : (
                 <div style={{ height: Math.max(160, data.byBase.length * 58 + 40) }}>
-                  <ResponsiveContainer>
+                  <Chart height={Math.max(160, data.byBase.length * 58 + 40)}>
                     <BarChart data={data.byBase} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }} barCategoryGap="28%">
                       <CartesianGrid stroke={GRID} horizontal={false} />
                       <XAxis type="number" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={fmtCompact} />
@@ -251,7 +259,7 @@ export default function Dashboard() {
                       <Bar dataKey="onHand" name="On hand" stackId="b" fill={MOVE.transferIn.color} stroke="#141a24" strokeWidth={2} />
                       <Bar dataKey="assigned" name="Assigned" stackId="b" fill={MOVE.assigned.color} stroke="#141a24" strokeWidth={2} radius={[0, 4, 4, 0]} />
                     </BarChart>
-                  </ResponsiveContainer>
+                  </Chart>
                 </div>
               )}
             </Card>

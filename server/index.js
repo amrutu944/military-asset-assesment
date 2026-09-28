@@ -21,5 +21,11 @@ const PORT = process.env.PORT || 5000;
     await seedDemoData();
   }
 
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+  // Behind Render's proxy, Node's default 5s keep-alive lets the proxy reuse a
+  // connection Node has just closed, which surfaces as random 502/520 errors.
+  // Keep idle connections open longer than the proxy does.
+  server.keepAliveTimeout = 120 * 1000;
+  server.headersTimeout = 121 * 1000;
 })();
